@@ -24,28 +24,41 @@ x1	x2	x3	x4	F
 #include <iostream>
 #include <math.h>
 #include <fstream>
+#include <algorithm>
 
 using namespace std;
 
-float netFunc(bool **xArr, size_t n, size_t col, float *wArr){
-	float net = 0;
-	for (size_t i = 0; i < n; ++i){
-		net += static_cast<int>(xArr[i][col]) * wArr[i];
+// высчитывает phiFunction
+float phiFunctionCalc(bool **xArr, size_t tableTruthNumOfElement, size_t col, bool *cArr){
+	int degree = 0;
+	for (size_t i = 0; i < tableTruthNumOfElement; ++i){
+		degree += static_cast<int>(pow((static_cast<int>(xArr[i][col])) - static_cast<int>(cArr[i]), 2));
 	}
-	return net += wArr[n];
+	return exp(-degree);
 }
 
+// считатет net
+float netFunc(float *phiArr, size_t JSize, float *vArr){
+	float net = 0;
+	for (size_t i = 0; i < JSize; ++i){
+		net += phiArr[i] * vArr[i];
+	}
+	return net += vArr[JSize];
+}
+
+// Y
 bool outFunc(float net){
 	return net >= 0 ? true : false;
 }
 
+// функция, возвращающая истинное значение выданной функции
 void getTruthVectorOfValueForMySimpleFunc(size_t *vectorTruthFunction, bool **xArr, size_t tableTruthNumOfCol){
 	for (size_t i = 0; i < tableTruthNumOfCol; ++i){
 		vectorTruthFunction[i] = ((xArr[0][i] | xArr[1][i]) & (!xArr[2][i]) & xArr[3][i]) == true ? 1 : 0;
 	}
 }
 
-
+// функция подсчета ошибки эры
 void calcValueOfEraError(size_t *vectorCalcFunction, size_t *vectorTruthFunction, size_t tableTruthNumOfCol, int &squereError){
 	squereError = 0;
 	for (size_t i = 0; i < tableTruthNumOfCol; ++i){
@@ -53,22 +66,18 @@ void calcValueOfEraError(size_t *vectorCalcFunction, size_t *vectorTruthFunction
 	}
 }
 
-void calcNewValuesOfWARR(float *wArr, float *wDeltaArr, bool **xArr, size_t i, size_t tableTruthNumOfElement, float etto, int delta, float net, bool isSigmoid){
-	for (size_t j = 0; j < tableTruthNumOfElement; j++){
-		wArr[j] = wArr[j] + wDeltaArr[j];
-		if (!isSigmoid)
-			wDeltaArr[j] = etto * delta * static_cast<int>(xArr[j][i]);
-
-		else wDeltaArr[j] = static_cast<float>(etto * delta * static_cast<int>(xArr[j][i])) / (2 * static_cast<float>(powf(abs(net) + 1, 2)));
+// функция подсчета вектора весов связей
+void calcNewValuesOfVARR(float *vArr, float *vDeltaArr, float *phiArr, size_t JSize, int delta, float etto = 0.3){
+	for (size_t j = 0; j < JSize; j++){
+		vArr[j] = vArr[j] + vDeltaArr[j];
+		vDeltaArr[j] = static_cast<float>(etto * delta * phiArr[j]);
 	}
-	wArr[tableTruthNumOfElement] = wArr[tableTruthNumOfElement] + wDeltaArr[tableTruthNumOfElement];
-	if (!isSigmoid)
-		wDeltaArr[tableTruthNumOfElement] = etto * delta;
-	else wDeltaArr[tableTruthNumOfElement] = static_cast<float>(etto * delta) / (2 * static_cast<float>(powf(abs(net) + 1, 2)));
-
+	vArr[JSize] = vArr[JSize] + vDeltaArr[JSize];
+	vDeltaArr[JSize] = static_cast<float>(etto * delta);
 }
 
-void printAnswer(size_t *vectorCalcFunction, size_t tableTruthNumOfCol, float *wArr, size_t tableTruthNumOfElement, int squereError, ofstream &out, size_t coutnEra){
+// функция вывода
+void printAnswer(size_t *vectorCalcFunction, size_t tableTruthNumOfCol, float *vArr, size_t tableTruthNumOfElement, int squereError, ofstream &out, size_t coutnEra){
 	if (out.is_open()){
 		out << "Номер эпохи " << coutnEra << "\t";
 		out << "Y = ( ";
@@ -78,16 +87,25 @@ void printAnswer(size_t *vectorCalcFunction, size_t tableTruthNumOfCol, float *w
 		out << "),\n";
 		out << "W = ( ";
 		for (size_t i = 0; i < tableTruthNumOfElement + 1; ++i){
-			out << wArr[i] << " ";
+			out << vArr[i] << " ";
 		}
 		out << "),\t";
 		out << "E = " << squereError << "\n";
 	}
 }
 
+// функция, которая определяет принадлежность вектора к набору обучающих векторов
+bool isTeachVector(size_t *teachVector, size_t length, size_t i){
+	for (size_t j = 0; j < length; ++j)
+		if (i == teachVector[j])
+			return true;
+	return false;
+}
+
 void main(int argc, char*argv[]){
 	setlocale(LC_ALL, "rus");
 
+	// размеры таблицы истинности
 	size_t tableTruthNumOfElement = 4,
 		tableTruthNumOfCol = static_cast<size_t>(pow(2, tableTruthNumOfElement));
 
@@ -114,9 +132,42 @@ void main(int argc, char*argv[]){
 	getTruthVectorOfValueForMySimpleFunc(vectorTruthFunction, xArr, tableTruthNumOfCol); // заношу истинные значения в вектор значений функции
 
 
-	float *wArr = (float*)calloc(tableTruthNumOfElement + 1, sizeof(float)); // 00000 веса связей
-	float etto = 0.3; // норма обучения
-	float *wDeltaArr = (float*)calloc(tableTruthNumOfElement + 1, sizeof(float)); // вектор текущих дельта значений 00000
+	size_t sizePhiArr = 0;
+	bool oneOrZero = true;
+	for (size_t i = 0; i < tableTruthNumOfCol; ++i){
+		sizePhiArr += vectorTruthFunction[i];
+	}
+	if (sizePhiArr == min(sizePhiArr, tableTruthNumOfCol - sizePhiArr))
+		oneOrZero = true;
+	else oneOrZero = false;
+
+	sizePhiArr = min(sizePhiArr, tableTruthNumOfCol - sizePhiArr);
+	float *phiArr = (float*)calloc(sizePhiArr, sizeof(float));
+
+	bool **cArr = new bool*[sizePhiArr];
+	for (size_t i = 0; i < sizePhiArr; ++i)
+		cArr[i] = new bool[tableTruthNumOfElement];
+
+	size_t count = 0;
+	for (size_t i = 0; i < tableTruthNumOfCol; ++i){
+		if (oneOrZero && vectorTruthFunction[i] == 1){
+			for (size_t j = 0; j < tableTruthNumOfElement; ++j){
+				cArr[count][j] = xArr[j][i];
+			}
+			count++;
+		}
+		else if (!oneOrZero && vectorTruthFunction[i] == 0){
+			for (size_t j = 0; j < tableTruthNumOfElement; ++j){
+				cArr[count][j] = xArr[j][i];
+			}
+			count++;
+		}
+		
+	}
+
+	float *vArr = (float*)calloc(sizePhiArr + 1, sizeof(float)); // 00000 веса связей
+	//float etto = 0.3; // норма обучения
+	float *vDeltaArr = (float*)calloc(sizePhiArr + 1, sizeof(float)); // вектор текущих дельта значений 00000
 
 	size_t *vectorCalcFunction = new size_t[tableTruthNumOfCol]; // вектор значений функций для обучения
 
@@ -131,19 +182,24 @@ void main(int argc, char*argv[]){
 
 	size_t countEra = 0;
 
+	// 1 2 3 5 7 9 10 11 12 9ть обучающих векторов для сигмоидальной функции
+	size_t teachVector[9] = { 1, 2, 3, 5, 7, 9, 10, 11, 12 };
+
+
 	while (squereError){
 		for (size_t i = 0; i < tableTruthNumOfCol; ++i){
-			float net = netFunc(xArr, tableTruthNumOfElement, i, wArr); // считаю net
+			for (size_t j = 0; j < sizePhiArr; ++j){
+				phiArr[j] = phiFunctionCalc(xArr, tableTruthNumOfElement, i, cArr[j]);
+			}
+			float net = netFunc(phiArr, sizePhiArr, vArr); // считаю net
 			vectorCalcFunction[i] = outFunc(net); // процесс обучения
 			delta = vectorTruthFunction[i] - vectorCalcFunction[i]; // считаю дельту
-			// 1 2 3 5 7 9 10 11 12 9ть обучающих векторов для сигмоидальной функции
-			calcNewValuesOfWARR(wArr, wDeltaArr, xArr, i, tableTruthNumOfElement, etto, delta, net, true); // пересчитываю вектор весов
+			if (isTeachVector(teachVector, 9, i))
+				calcNewValuesOfVARR(vArr, vDeltaArr, phiArr, sizePhiArr, delta); // пересчитываю вектор весов
 		}
 		calcValueOfEraError(vectorCalcFunction, vectorTruthFunction, tableTruthNumOfCol, squereError); // высчитываю ошибку в этой эре
 		if (out.is_open())
-			printAnswer(vectorCalcFunction, tableTruthNumOfCol, wArr, tableTruthNumOfElement, squereError, out, countEra++);
+			printAnswer(vectorCalcFunction, tableTruthNumOfCol, vArr, tableTruthNumOfElement, squereError, out, countEra++);
 	}
-
-	getchar();
 
 }
